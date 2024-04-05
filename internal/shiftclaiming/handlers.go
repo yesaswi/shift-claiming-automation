@@ -36,7 +36,7 @@ func (s *Service) HandleClaimCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("Shift claimed successfully"))
+	w.Write([]byte("Triggered shift claiming"))
 }
 
 func (s *Service) HandleHealthCheck(w http.ResponseWriter, r *http.Request) {

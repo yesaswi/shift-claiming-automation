@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/yesaswi/shift-claiming-automation/internal/cloudtasks"
 	"github.com/yesaswi/shift-claiming-automation/internal/firestore"
 	"github.com/yesaswi/shift-claiming-automation/internal/shiftclaiming"
 	"github.com/yesaswi/shift-claiming-automation/pkg/config"
@@ -40,8 +41,16 @@ func main() {
 	}
 	defer firestoreClient.Close()
 
+	// Initialize the Cloud Tasks client
+	cloudTasksClient, err := cloudtasks.NewClient(context.Background())
+	if err != nil {
+		log.Error(fmt.Sprintf("Failed to initialize Cloud Tasks client: %v", err))
+		os.Exit(1)
+	}
+	defer cloudTasksClient.Close()
+
 	// Initialize the Shift Claiming Service
-	service := shiftclaiming.NewService(log, firestoreClient)
+	service := shiftclaiming.NewService(log, firestoreClient, cloudTasksClient)
 
 	// Create a new HTTP router
 	router := mux.NewRouter()
