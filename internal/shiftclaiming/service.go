@@ -60,6 +60,13 @@ func (s *Service) StopClaiming() error {
     if err != nil {
         return fmt.Errorf("failed to update start/stop flag: %v", err)
     }
+
+    // Delete all pending tasks from the queue and stop claiming
+    err = cloudtaskss.DeleteAllTasks(s.cloudTasksClient, "autoclaimer-42", "us-east4", "barbequeue")
+    if err != nil {
+        return fmt.Errorf("failed to delete pending tasks: %v", err)
+    }
+
     return nil
 }
 
@@ -76,36 +83,52 @@ func (s *Service) ScheduleClaimTask(scheduleTime time.Time) error {
 func (s *Service) ClaimShift() error {
     s.log.Info("Claiming shift...")
 
+    // Check if claiming is enabled
+    configDoc := s.firestoreClient.Collection("configuration").Doc("config")
+    configDocSnap, err := configDoc.Get(context.Background())
+    if err != nil {
+        return fmt.Errorf("failed to retrieve configuration: %v", err)
+    }
+    configData := configDocSnap.Data()
+    startStopFlag, ok := configData["startStopFlag"].(bool)
+    if !ok {
+        return fmt.Errorf("missing or invalid 'startStopFlag' in configuration")
+    }
+    if !startStopFlag {
+        s.log.Info("Claiming is disabled")
+        return nil
+    }
+
     // Retrieve the claiming configuration from Firestore
-    configDoc := s.firestoreClient.Collection("configuration").Doc("shiftconfig")
-    var config map[string]interface{}
-    docSnap, err := configDoc.Get(context.Background())
+    shiftConfigDoc := s.firestoreClient.Collection("configuration").Doc("shiftconfig")
+    shiftConfigDocSnap, err := shiftConfigDoc.Get(context.Background())
     if err != nil {
         return fmt.Errorf("failed to retrieve claiming configuration: %v", err)
     }
-    err = docSnap.DataTo(&config)
+    var shiftConfig map[string]interface{}
+    err = shiftConfigDocSnap.DataTo(&shiftConfig)
     if err != nil {
         return fmt.Errorf("failed to parse claiming configuration: %v", err)
     }
 
     // Extract the necessary configuration values
-    cookie, ok := config["cookie"].(string)
+    cookie, ok := shiftConfig["cookie"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'cookie' in claiming configuration")
     }
-    xAPIToken, ok := config["x_api_token"].(string)
+    xAPIToken, ok := shiftConfig["x_api_token"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'x_api_token' in claiming configuration")
     }
-    shiftStartDate, ok := config["shift_start_date"].(string)
+    shiftStartDate, ok := shiftConfig["shift_start_date"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'shift_start_date' in claiming configuration")
     }
-    shiftRange, ok := config["shift_range"].(string)
+    shiftRange, ok := shiftConfig["shift_range"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'shift_range' in claiming configuration")
     }
-    userID, ok := config["user_id"].(string)
+    userID, ok := shiftConfig["user_id"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'user_id' in claiming configuration")
     }
