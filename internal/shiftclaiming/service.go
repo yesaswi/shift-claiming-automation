@@ -12,6 +12,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/firestore"
+	cloudtaskss "github.com/yesaswi/shift-claiming-automation/internal/cloudtasks"
 	"go.uber.org/zap"
 )
 
@@ -39,6 +40,13 @@ func (s *Service) StartClaiming() error {
     if err != nil {
         return fmt.Errorf("failed to update start/stop flag: %v", err)
     }
+
+    // Schedule the initial claim task
+    err = s.ScheduleClaimTask(time.Now())
+    if err != nil {
+        return fmt.Errorf("failed to schedule initial claim task: %v", err)
+    }
+
     return nil
 }
 
@@ -51,6 +59,16 @@ func (s *Service) StopClaiming() error {
     })
     if err != nil {
         return fmt.Errorf("failed to update start/stop flag: %v", err)
+    }
+    return nil
+}
+
+func (s *Service) ScheduleClaimTask(scheduleTime time.Time) error {
+    // Schedule a new task to trigger the /claim endpoint
+    s.log.Info("Scheduling claim task...", zap.Time("schedule_time", scheduleTime))
+    _, err := cloudtaskss.CreateTask(s.cloudTasksClient, "autoclaimer-42", "us-east4", "barbequeue", "https://autoclaimer-h5km45tdpq-uk.a.run.app/claim", scheduleTime)
+    if err != nil {
+        return fmt.Errorf("failed to schedule claim task: %v", err)
     }
     return nil
 }
@@ -101,6 +119,12 @@ func (s *Service) ClaimShift() error {
             return err
         }
         return fmt.Errorf("failed to fetch available shifts: %v", err)
+    }
+
+    // Schedule the next claim task
+    err = s.ScheduleClaimTask(time.Now().Add(5 * time.Second))
+    if err != nil {
+        return fmt.Errorf("failed to schedule next claim task: %v", err)
     }
 
     if len(availableShifts) == 0 {
