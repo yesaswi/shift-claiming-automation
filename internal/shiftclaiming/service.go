@@ -106,7 +106,7 @@ func (s *Service) ClaimShift() error {
         return fmt.Errorf("failed to retrieve claiming configuration: %v", err)
     }
     var authConfig map[string]interface{}
-    err = authConfigDocSnap.DataTo(&authConfigDoc)
+    err = authConfigDocSnap.DataTo(&authConfig)
     if err != nil {
         return fmt.Errorf("failed to parse auth configuration: %v", err)
     }
