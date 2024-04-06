@@ -285,7 +285,17 @@ func (s *Service) ClaimShift() error {
         if strings.HasPrefix(err.Error(), "Swap list disabled") ||
             strings.HasPrefix(err.Error(), "Please wait") ||
             strings.HasPrefix(err.Error(), "Session Timeout") {
-            return err
+            s.log.Info("Claiming is disabled", zap.String("error", err.Error()))
+            
+            if strings.HasPrefix(err.Error(), "Please wait") {
+                // Schedule the next claim task after 30 minutes
+                err = s.ScheduleClaimTask(time.Now().Add(30 * time.Minute))
+                if err != nil {
+                    return fmt.Errorf("failed to schedule next claim task: %v", err)
+                }
+            }
+
+            return fmt.Errorf("claiming is disabled: %v", err)
         }
         return fmt.Errorf("failed to fetch available shifts: %v", err)
     }
