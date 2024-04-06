@@ -1,6 +1,7 @@
 package shiftclaiming
 
 import (
+	"encoding/json"
 	"net/http"
 
 	customerrors "github.com/yesaswi/shift-claiming-automation/pkg/errors"
@@ -42,4 +43,31 @@ func (s *Service) HandleClaimCommand(w http.ResponseWriter, r *http.Request) {
 func (s *Service) HandleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
+}
+
+func (s *Service) HandleAuthentication(w http.ResponseWriter, r *http.Request) {
+    var loginData LoginData
+
+    err := json.NewDecoder(r.Body).Decode(&loginData)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
+    }
+
+    // Pass the individual fields to the Authenticate method
+    err = s.Authenticate(loginData.LoginURL, loginData.LoginCode, loginData.Username, loginData.Password)
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusUnauthorized)
+        return
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(http.StatusOK)
+}
+
+type LoginData struct {
+	LoginURL  string `json:"login_url"`
+	LoginCode string `json:"login_code"`
+	Username  string `json:"username"`
+	Password  string `json:"password"`
 }

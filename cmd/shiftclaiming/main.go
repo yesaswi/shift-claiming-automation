@@ -59,6 +59,7 @@ func main() {
 	router.HandleFunc("/start", service.HandleStartCommand).Methods(http.MethodPost)
 	router.HandleFunc("/stop", service.HandleStopCommand).Methods(http.MethodPost)
 	router.HandleFunc("/claim", service.HandleClaimCommand).Methods(http.MethodPost)
+	router.HandleFunc("/auth", service.HandleAuthentication).Methods(http.MethodPost)
 
 	// Start the HTTP server
 	port := fmt.Sprintf(":%d", cfg.Port)

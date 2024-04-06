@@ -12,6 +12,7 @@ import (
 
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/firestore"
+	"github.com/playwright-community/playwright-go"
 	cloudtaskss "github.com/yesaswi/shift-claiming-automation/internal/cloudtasks"
 	"go.uber.org/zap"
 )
@@ -80,6 +81,138 @@ func (s *Service) ScheduleClaimTask(scheduleTime time.Time) error {
     return nil
 }
 
+func (s *Service) Authenticate(loginURL, loginCode, username, password string) error {
+    s.log.Info("Authenticating...")
+    // Execute the Playwright script to authenticate
+    result, err := executePlaywright(loginURL, loginCode, username, password)
+    if err != nil {
+        return fmt.Errorf("failed to execute Playwright: %v", err)
+    }
+
+    configDoc := s.firestoreClient.Collection("configuration").Doc("auth")
+    // update cookie and x-api-token
+    _, err = configDoc.Set(context.Background(), map[string]interface{}{
+        "cookie":      result.Cookie,
+        "x_api_token": result.XAPIToken,
+        "user_id":    username,
+        "timestamp":   time.Now(),
+    })
+    if err != nil {
+        return fmt.Errorf("failed to update cookie and x-api-token: %v", err)
+    }
+    return nil
+}
+
+func executePlaywright(loginURL, loginCode, username, password string) (Result, error) {
+	pw, err := playwright.Run(&playwright.RunOptions{
+		Browsers: []string{"chromium"},
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("could not launch playwright: %v", err)
+	}
+	defer pw.Stop()
+
+	browser, err := pw.Chromium.Launch(playwright.BrowserTypeLaunchOptions{
+		Headless: playwright.Bool(true),
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("could not launch browser: %v", err)
+	}
+
+	defer browser.Close()
+
+	context, err := browser.NewContext()
+	if err != nil {
+		return Result{}, fmt.Errorf("could not create context: %v", err)
+	}
+
+	var xAPIToken string
+	context.OnRequest(func(request playwright.Request) {
+		xAPIToken = request.Headers()["x-api-token"]
+	})
+
+	page, err := context.NewPage()
+	if err != nil {
+		return Result{}, fmt.Errorf("could not create page: %v", err)
+	}
+
+	_, err = page.Goto(loginURL, playwright.PageGotoOptions{
+		WaitUntil: playwright.WaitUntilStateNetworkidle,
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("could not goto login page: %v", err)
+	}
+
+	codeLocator := page.GetByLabel("Code:")
+	err = codeLocator.Fill(loginCode)
+	if err != nil {
+		return Result{}, fmt.Errorf("could not fill login code: %v", err)
+	}
+
+	userLocator := page.GetByLabel("User:")
+	err = userLocator.Fill(username)
+	if err != nil {
+		return Result{}, fmt.Errorf("could not fill username: %v", err)
+	}
+
+	passwordLocator := page.GetByLabel("Password:")
+	err = passwordLocator.Fill(password)
+	if err != nil {
+		return Result{}, fmt.Errorf("could not fill password: %v", err)
+	}
+
+	err = passwordLocator.Press("Enter")
+	if err != nil {
+		return Result{}, fmt.Errorf("could not press enter: %v", err)
+	}
+
+	scheduleButton := page.GetByRole("button", playwright.PageGetByRoleOptions{
+		Name: "Schedule",
+	})
+	err = scheduleButton.Click()
+
+	if err != nil {
+		return Result{}, fmt.Errorf("could not click on schedule button: %v", err)
+	}
+	swapBoardButton := page.Locator("#collapseSchedule").GetByRole("link", playwright.LocatorGetByRoleOptions{
+		Name: "SwapBoard",
+	})
+
+	err = swapBoardButton.Click()
+	if err != nil {
+		log.Fatalf("could not click SwapBoard link: %v", err)
+	}
+
+	err = page.WaitForLoadState(playwright.PageWaitForLoadStateOptions{
+		State: playwright.LoadStateNetworkidle,
+	})
+
+	if err != nil {
+		return Result{}, fmt.Errorf("could not wait for network idle: %v", err)
+	}
+
+	cookies, err := context.Cookies()
+	if err != nil {
+		return Result{}, fmt.Errorf("could not get cookies: %v", err)
+	}
+
+	var cookieStrings []string
+	for _, cookie := range cookies {
+		cookieStrings = append(cookieStrings, fmt.Sprintf("%s=%s", cookie.Name, cookie.Value))
+	}
+	cookieString := strings.Join(cookieStrings, "; ")
+
+	return Result{
+		Cookie:    cookieString,
+		XAPIToken: xAPIToken,
+	}, nil
+}
+
+type Result struct {
+	Cookie    string `json:"cookie"`
+	XAPIToken string `json:"x-api-token"`
+}
+
 func (s *Service) ClaimShift() error {
     s.log.Info("Claiming shift...")
 
@@ -100,6 +233,18 @@ func (s *Service) ClaimShift() error {
     }
 
     // Retrieve the claiming configuration from Firestore
+    authConfigDoc := s.firestoreClient.Collection("configuration").Doc("auth")
+    authConfigDocSnap, err := authConfigDoc.Get(context.Background())
+    if err != nil {
+        return fmt.Errorf("failed to retrieve claiming configuration: %v", err)
+    }
+    var authConfig map[string]interface{}
+    err = authConfigDocSnap.DataTo(&authConfigDoc)
+    if err != nil {
+        return fmt.Errorf("failed to parse auth configuration: %v", err)
+    }
+
+    // Retrieve the claiming configuration from Firestore
     shiftConfigDoc := s.firestoreClient.Collection("configuration").Doc("shiftconfig")
     shiftConfigDocSnap, err := shiftConfigDoc.Get(context.Background())
     if err != nil {
@@ -112,14 +257,15 @@ func (s *Service) ClaimShift() error {
     }
 
     // Extract the necessary configuration values
-    cookie, ok := shiftConfig["cookie"].(string)
+    cookie, ok := authConfig["cookie"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'cookie' in claiming configuration")
     }
-    xAPIToken, ok := shiftConfig["x_api_token"].(string)
+    xAPIToken, ok := authConfig["x_api_token"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'x_api_token' in claiming configuration")
     }
+
     shiftStartDate, ok := shiftConfig["shift_start_date"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'shift_start_date' in claiming configuration")
@@ -128,7 +274,7 @@ func (s *Service) ClaimShift() error {
     if !ok {
         return fmt.Errorf("missing or invalid 'shift_range' in claiming configuration")
     }
-    userID, ok := shiftConfig["user_id"].(string)
+    userID, ok := authConfig["user_id"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'user_id' in claiming configuration")
     }
