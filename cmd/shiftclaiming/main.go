@@ -1,7 +1,10 @@
 package main
 
 import (
+	cloudtasks2 "cloud.google.com/go/cloudtasks/apiv2"
+	firestore2 "cloud.google.com/go/firestore"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -30,7 +33,12 @@ func main() {
 		fmt.Printf(`{"message": "Failed to initialize Firestore client", "error": "%v", "severity": "critical"}`+"\n", err)
 		os.Exit(1)
 	}
-	defer firestoreClient.Close()
+	defer func(firestoreClient *firestore2.Client) {
+		err := firestoreClient.Close()
+		if err != nil {
+			fmt.Printf(`{"message": "Failed to close Firestore client", "error": "%v", "severity": "error"}`+"\n", err)
+		}
+	}(firestoreClient)
 
 	// Initialize the Cloud Tasks client
 	cloudTasksClient, err := cloudtasks.NewClient(context.Background())
@@ -38,7 +46,12 @@ func main() {
 		fmt.Printf(`{"message": "Failed to initialize Cloud Tasks client", "error": "%v", "severity": "critical"}`+"\n", err)
 		os.Exit(1)
 	}
-	defer cloudTasksClient.Close()
+	defer func(cloudTasksClient *cloudtasks2.Client) {
+		err := cloudTasksClient.Close()
+		if err != nil {
+			fmt.Printf(`{"message": "Failed to close Cloud Tasks client", "error": "%v", "severity": "error"}`+"\n", err)
+		}
+	}(cloudTasksClient)
 
 	// Initialize the Shift Claiming Service
 	service := shiftclaiming.NewService(firestoreClient, cloudTasksClient)
@@ -50,7 +63,7 @@ func main() {
 	router.HandleFunc("/start", service.HandleStartCommand).Methods(http.MethodPost)
 	router.HandleFunc("/stop", service.HandleStopCommand).Methods(http.MethodPost)
 	router.HandleFunc("/claim", service.HandleClaimCommand).Methods(http.MethodPost)
-	
+
 	// Start the HTTP server
 	port := fmt.Sprintf(":%d", cfg.Port)
 	fmt.Printf(`{"message": "Starting server on port %s", "severity": "info"}`+"\n", port)
@@ -61,7 +74,7 @@ func main() {
 
 	// Start the server in a goroutine
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fmt.Printf(`{"message": "Server error", "error": "%v", "severity": "critical"}`+"\n", err)
 			os.Exit(1)
 		}
