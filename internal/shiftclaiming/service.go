@@ -156,15 +156,24 @@ func (s *Service) ClaimShift() error {
             strings.HasPrefix(err.Error(), "Session Timeout") {
             fmt.Printf(`{"message": "Claiming is disabled", "error": "%s", "severity": "info"}`+"\n", err.Error())
             
-            if strings.HasPrefix(err.Error(), "Please wait") {
+            if strings.HasPrefix(err.Error(), "Swap list disabled") {
                 // Schedule the next claim task after 30 minutes
                 err = s.ScheduleClaimTask(time.Now().Add(30 * time.Minute))
                 if err != nil {
                     return fmt.Errorf("failed to schedule next claim task: %v", err)
                 }
+            } else if strings.HasPrefix(err.Error(), "Please wait") {
+                // Schedule the next claim task after 3 seconds
+                err = s.ScheduleClaimTask(time.Now().Add(3 * time.Second))
+                if err != nil {
+                    return fmt.Errorf("failed to schedule next claim task: %v", err)
+                }
+            } else if strings.HasPrefix(err.Error(), "Session Timeout") {
+                // Lof the error and stop claiming
+                fmt.Printf(`{"message": "Session Timeout. Please sign in again.", "severity": "alert"}`+"\n")
             }
-
-            return fmt.Errorf("claiming is disabled: %v", err)
+            
+            return nil
         }
         return fmt.Errorf("failed to fetch available shifts: %v", err)
     }
@@ -246,7 +255,7 @@ func fetchAvailableShifts(cookie, xAPIToken, shiftStartDate, shiftRange string) 
             return nil, fmt.Errorf("failed to read response body: %v", err)
         }
         bodyString := string(bodyBytes)
-        if strings.Contains(bodyString, "Swap list disabled. (30) minutes idle required for reset.") {
+        if strings.Contains(bodyString, "Swap list disabled.  (30) minutes idle required for reset.") {
             return nil, fmt.Errorf("%s", bodyString)
         } else if strings.Contains(bodyString, "Please wait [3] seconds to refresh list.") {
             return nil, fmt.Errorf("%s", bodyString)
