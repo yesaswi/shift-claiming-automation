@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -13,25 +12,22 @@ import (
 	cloudtasks "cloud.google.com/go/cloudtasks/apiv2"
 	"cloud.google.com/go/firestore"
 	cloudtaskss "github.com/yesaswi/shift-claiming-automation/internal/cloudtasks"
-	"go.uber.org/zap"
 )
 
 type Service struct {
-    log             *zap.Logger
     firestoreClient *firestore.Client
     cloudTasksClient *cloudtasks.Client
 }
 
-func NewService(log *zap.Logger, firestoreClient *firestore.Client, cloudTasksClient *cloudtasks.Client) *Service {
+func NewService(firestoreClient *firestore.Client, cloudTasksClient *cloudtasks.Client) *Service {
     return &Service{
-        log:             log,
         firestoreClient: firestoreClient,
         cloudTasksClient: cloudTasksClient,
     }
 }
 
 func (s *Service) StartClaiming() error {
-    s.log.Info("Starting shift claiming...")
+    fmt.Println(`{"message": "Starting shift claiming...", "severity": "info"}`)
     // Update the start/stop flag in Firestore
     configDoc := s.firestoreClient.Collection("configuration").Doc("config")
     _, err := configDoc.Set(context.Background(), map[string]interface{}{
@@ -51,7 +47,7 @@ func (s *Service) StartClaiming() error {
 }
 
 func (s *Service) StopClaiming() error {
-    s.log.Info("Stopping shift claiming...")
+    fmt.Println(`{"message": "Stopping shift claiming...", "severity": "info"}`)
     // Update the start/stop flag in Firestore
     configDoc := s.firestoreClient.Collection("configuration").Doc("config")
     _, err := configDoc.Set(context.Background(), map[string]interface{}{
@@ -72,7 +68,7 @@ func (s *Service) StopClaiming() error {
 
 func (s *Service) ScheduleClaimTask(scheduleTime time.Time) error {
     // Schedule a new task to trigger the /claim endpoint
-    s.log.Info("Scheduling claim task...", zap.Time("schedule_time", scheduleTime))
+    fmt.Printf(`{"message": "Scheduling claim task...", "schedule_time": "%s", "severity": "info"}`+"\n", scheduleTime)
     _, err := cloudtaskss.CreateTask(s.cloudTasksClient, "autoclaimer-42", "us-east4", "barbequeue", "https://autoclaimer-h5km45tdpq-uk.a.run.app/claim", scheduleTime)
     if err != nil {
         return fmt.Errorf("failed to schedule claim task: %v", err)
@@ -81,7 +77,7 @@ func (s *Service) ScheduleClaimTask(scheduleTime time.Time) error {
 }
 
 func (s *Service) ClaimShift() error {
-    s.log.Info("Claiming shift...")
+    fmt.Println(`{"message": "Claiming shift...", "severity": "info"}`)
 
     // Check if claiming is enabled
     configDoc := s.firestoreClient.Collection("configuration").Doc("config")
@@ -95,7 +91,7 @@ func (s *Service) ClaimShift() error {
         return fmt.Errorf("missing or invalid 'startStopFlag' in configuration")
     }
     if !startStopFlag {
-        s.log.Info("Claiming is disabled")
+        fmt.Println(`{"message": "Claiming is disabled", "severity": "warning"}`)
         return nil
     }
 
@@ -141,6 +137,12 @@ func (s *Service) ClaimShift() error {
     if !ok {
         return fmt.Errorf("missing or invalid 'shift_range' in claiming configuration")
     }
+    // A, B, C1, C2
+    shiftGroup, ok := shiftConfig["shift_group"].(string)
+    if !ok {
+        return fmt.Errorf("missing or invalid 'shift_group' in claiming configuration")
+    }
+
     userID, ok := authConfig["user_id"].(string)
     if !ok {
         return fmt.Errorf("missing or invalid 'user_id' in claiming configuration")
@@ -152,7 +154,7 @@ func (s *Service) ClaimShift() error {
         if strings.HasPrefix(err.Error(), "Swap list disabled") ||
             strings.HasPrefix(err.Error(), "Please wait") ||
             strings.HasPrefix(err.Error(), "Session Timeout") {
-            s.log.Info("Claiming is disabled", zap.String("error", err.Error()))
+            fmt.Printf(`{"message": "Claiming is disabled", "error": "%s", "severity": "info"}`+"\n", err.Error())
             
             if strings.HasPrefix(err.Error(), "Please wait") {
                 // Schedule the next claim task after 30 minutes
@@ -174,16 +176,42 @@ func (s *Service) ClaimShift() error {
     }
 
     if len(availableShifts) == 0 {
-        s.log.Info("No available shifts to claim")
+        fmt.Println(`{"message": "No available shifts to claim", "severity": "info"}`)
+        // To a new random documentID in the requests collection
+        s.firestoreClient.Collection("requests").NewDoc().Set(context.Background(), map[string]interface{}{
+            "timestamp": time.Now(),
+            "message": "No available shifts to claim",
+        })
         return nil
     }
 
+    for _, shift := range availableShifts {
+    s.firestoreClient.Collection("requests").NewDoc().Set(context.Background(), map[string]interface{}{
+            "timestamp": time.Now(),
+            "schId": shift.SchId,
+            "locId": shift.LocId,
+            "stnName": shift.StnName,
+            "date": shift.Date,
+            "hours": shift.Hours,
+            "shiftGroup": shift.ShiftGroup,
+            "start": shift.Start,
+            "end": shift.End,
+        })
+    }
+
     // Claim the shifts
-    claimingResults := claimShifts(availableShifts, cookie, xAPIToken, userID)
+    claimingResults := claimShifts(availableShifts, cookie, xAPIToken, userID, shiftStartDate, shiftGroup)
+    for _, result := range claimingResults {
+        s.firestoreClient.Collection("claims").NewDoc().Set(context.Background(), map[string]interface{}{
+            "timestamp": result.Timestamp,
+            "shiftId": result.ShiftID,
+            "claimingStatus": result.ClaimingStatus,
+        })
+    }
     if len(claimingResults) == 0 {
-        s.log.Info("No shifts claimed")
+        fmt.Println(`{"message": "No shifts claimed", "severity": "alert"}`)
     } else if len(claimingResults) < len(availableShifts) {
-        s.log.Info("Some shifts failed to claim", zap.Any("claiming_results", claimingResults))
+        fmt.Printf(`{"message": "Some shifts failed to claim", "claiming_results": %v, "severity": "alert"}`+"\n", claimingResults)
     }
 
     return nil
@@ -209,7 +237,7 @@ func fetchAvailableShifts(cookie, xAPIToken, shiftStartDate, shiftRange string) 
     defer func(Body io.ReadCloser) {
         err := Body.Close()
         if err != nil {
-            log.Printf("Failed to close response body: %v", err)
+            fmt.Printf(`{"message": "Failed to close response body", "error": "%v", "severity": "warning"}`+"\n", err)
         }
     }(resp.Body)
     if resp.StatusCode != http.StatusOK {
@@ -249,12 +277,12 @@ func fetchAvailableShifts(cookie, xAPIToken, shiftStartDate, shiftRange string) 
     return availableShifts, nil
 }
 
-func claimShifts(shifts []Shift, cookie, xAPIToken string, userID string) []ClaimingResult {
+func claimShifts(shifts []Shift, cookie, xAPIToken string, userID string, shiftStartDate string, shiftGroup string) []ClaimingResult {
     var claimingResults []ClaimingResult
     claimingURL := "https://tmwork.net/api/shift/swap/claim"
     req, err := http.NewRequest("PUT", claimingURL, nil)
     if err != nil {
-        log.Printf("Failed to create claiming request: %v", err)
+        fmt.Printf(`{"message": "Failed to create claiming request", "error": "%v", "severity": "error"}`+"\n", err)
     }
     client := &http.Client{}
     q := req.URL.Query()
@@ -263,11 +291,16 @@ func claimShifts(shifts []Shift, cookie, xAPIToken string, userID string) []Clai
     req.Header.Set("Cookie", cookie)
     req.Header.Set("X-API-Token", xAPIToken)
     for _, shift := range shifts {
+        shiftDate, _ := time.Parse("2006-01-02", shift.Date)
+        compareDate, _ := time.Parse("2006-01-02", shiftStartDate)
+        if  shiftDate.Before(compareDate) && !strings.Contains(shiftGroup, shift.ShiftGroup) {
+            continue
+        }
         q.Add("schid", fmt.Sprintf("%d", shift.SchId))
         req.URL.RawQuery = q.Encode()
         resp, err := client.Do(req)
         if err != nil {
-            log.Printf("Failed to claim shift: %d, error: %v", shift.SchId, err)
+            fmt.Printf(`{"message": "Failed to claim shift", "shift_id": %d, "error": "%v", "severity": "error"}`+"\n", shift.SchId, err)
             claimingResults = append(claimingResults, ClaimingResult{
                 ShiftID:        fmt.Sprintf("%d", shift.SchId),
                 ClaimingStatus: "failed",
@@ -278,16 +311,16 @@ func claimShifts(shifts []Shift, cookie, xAPIToken string, userID string) []Clai
         defer func(Body io.ReadCloser) {
             err := Body.Close()
             if err != nil {
-                log.Printf("Failed to close response body: %v", err)
+                fmt.Printf(`{"message": "Failed to close response body", "error": "%v", "severity": "warning"}`+"\n", err)
             }
         }(resp.Body)
         if resp.StatusCode != http.StatusOK {
             bodyBytes, err := io.ReadAll(resp.Body)
             if err != nil {
-                log.Printf("Failed to read response body: %v", err)
+                fmt.Printf(`{"message": "Failed to read response body", "error": "%v", "severity": "error"}`+"\n", err)
             } else {
                 bodyString := string(bodyBytes)
-                log.Printf("Failed to claim shift: %d, status code: %d, response: %s", shift.SchId, resp.StatusCode, bodyString)
+                fmt.Printf(`{"message": "Failed to claim shift", "shift_id": %d, "status_code": %d, "response": "%s", "severity": "error"}`+"\n", shift.SchId, resp.StatusCode, bodyString)
             }
             claimingResults = append(claimingResults, ClaimingResult{
                 ShiftID:        fmt.Sprintf("%d", shift.SchId),

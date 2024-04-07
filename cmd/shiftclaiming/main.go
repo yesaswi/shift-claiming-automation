@@ -14,29 +14,20 @@ import (
 	"github.com/yesaswi/shift-claiming-automation/internal/firestore"
 	"github.com/yesaswi/shift-claiming-automation/internal/shiftclaiming"
 	"github.com/yesaswi/shift-claiming-automation/pkg/config"
-	"github.com/yesaswi/shift-claiming-automation/pkg/logger"
 )
 
 func main() {
 	// Load the configuration
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		fmt.Printf("Failed to load configuration: %v\n", err)
+		fmt.Printf(`{"message": "Failed to load configuration", "error": "%v", "severity": "critical"}`+"\n", err)
 		os.Exit(1)
 	}
-
-	// Initialize the logger
-	log, err := logger.NewLogger()
-	if err != nil {
-		fmt.Printf("Failed to initialize logger: %v\n", err)
-		os.Exit(1)
-	}
-	defer log.Sync()
 
 	// Initialize the Firestore client
 	firestoreClient, err := firestore.NewClient(context.Background(), cfg.ProjectID, cfg.DatabaseID)
 	if err != nil {
-		log.Error(fmt.Sprintf("Failed to initialize Firestore client: %v", err))
+		fmt.Printf(`{"message": "Failed to initialize Firestore client", "error": "%v", "severity": "critical"}`+"\n", err)
 		os.Exit(1)
 	}
 	defer firestoreClient.Close()
@@ -44,13 +35,13 @@ func main() {
 	// Initialize the Cloud Tasks client
 	cloudTasksClient, err := cloudtasks.NewClient(context.Background())
 	if err != nil {
-		log.Error(fmt.Sprintf("Failed to initialize Cloud Tasks client: %v", err))
+		fmt.Printf(`{"message": "Failed to initialize Cloud Tasks client", "error": "%v", "severity": "critical"}`+"\n", err)
 		os.Exit(1)
 	}
 	defer cloudTasksClient.Close()
 
 	// Initialize the Shift Claiming Service
-	service := shiftclaiming.NewService(log, firestoreClient, cloudTasksClient)
+	service := shiftclaiming.NewService(firestoreClient, cloudTasksClient)
 
 	// Create a new HTTP router
 	router := mux.NewRouter()
@@ -62,7 +53,7 @@ func main() {
 	
 	// Start the HTTP server
 	port := fmt.Sprintf(":%d", cfg.Port)
-	log.Info(fmt.Sprintf("Starting server on port %s", port))
+	fmt.Printf(`{"message": "Starting server on port %s", "severity": "info"}`+"\n", port)
 	server := &http.Server{
 		Addr:    port,
 		Handler: router,
@@ -71,7 +62,7 @@ func main() {
 	// Start the server in a goroutine
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error(fmt.Sprintf("Server error: %v", err))
+			fmt.Printf(`{"message": "Server error", "error": "%v", "severity": "critical"}`+"\n", err)
 			os.Exit(1)
 		}
 	}()
@@ -82,11 +73,11 @@ func main() {
 	<-stop
 
 	// Shutdown the server gracefully
-	log.Info("Shutting down the server...")
+	fmt.Println(`{"message": "Shutting down the server...", "severity": "info"}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
-		log.Error(fmt.Sprintf("Server shutdown error: %v", err))
+		fmt.Printf(`{"message": "Server shutdown error", "error": "%v", "severity": "error"}`+"\n", err)
 	}
-	log.Info("Server stopped.")
+	fmt.Println(`{"message": "Server stopped.", "severity": "info"}`)
 }

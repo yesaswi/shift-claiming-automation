@@ -33,7 +33,6 @@ func CreateTask(client *cloudtasks.Client, projectID, locationID, queueID, targe
             ScheduleTime: timestamppb.New(scheduleTime),
         },
     }
-    fmt.Printf("Request: %v\n", req)
     return client.CreateTask(context.Background(), req)
 }
 
@@ -43,7 +42,6 @@ func DeleteTask(client *cloudtasks.Client, projectID, locationID, queueID, taskI
     req := &taskspb.DeleteTaskRequest{
         Name: fmt.Sprintf("projects/%s/locations/%s/queues/%s/tasks/%s", projectID, locationID, queueID, taskID),
     }
-    fmt.Printf("Request: %v\n", req)
     return client.DeleteTask(context.Background(), req)
 }
 
@@ -53,7 +51,6 @@ func DeleteAllTasks(client *cloudtasks.Client, projectID, locationID, queueID st
     req := &taskspb.ListTasksRequest{
         Parent: fmt.Sprintf("projects/%s/locations/%s/queues/%s", projectID, locationID, queueID),
     }
-    fmt.Printf("Request: %v\n", req)
     it := client.ListTasks(context.Background(), req)
     for {
         task, err := it.Next()

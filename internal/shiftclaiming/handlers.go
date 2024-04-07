@@ -9,7 +9,7 @@ import (
 func (s *Service) HandleStartCommand(w http.ResponseWriter, r *http.Request) {
 	err := s.StartClaiming()
 	if err != nil {
-		httpErr := customerrors.LogAndReturnError(s.log, err, "Failed to start claiming", "ERROR", http.StatusInternalServerError)
+		httpErr := customerrors.LogAndReturnError(err, "Failed to start claiming", "ERROR", http.StatusInternalServerError)
 		http.Error(w, httpErr.Error(), httpErr.(customerrors.HTTPError).StatusCode)
 		return
 	}
@@ -20,7 +20,7 @@ func (s *Service) HandleStartCommand(w http.ResponseWriter, r *http.Request) {
 func (s *Service) HandleStopCommand(w http.ResponseWriter, r *http.Request) {
 	err := s.StopClaiming()
 	if err != nil {
-		httpErr := customerrors.LogAndReturnError(s.log, err, "Failed to stop claiming", "ERROR", http.StatusInternalServerError)
+		httpErr := customerrors.LogAndReturnError(err, "Failed to stop claiming", "ERROR", http.StatusInternalServerError)
 		http.Error(w, httpErr.Error(), httpErr.(customerrors.HTTPError).StatusCode)
 		return
 	}
@@ -31,7 +31,7 @@ func (s *Service) HandleStopCommand(w http.ResponseWriter, r *http.Request) {
 func (s *Service) HandleClaimCommand(w http.ResponseWriter, r *http.Request) {
 	err := s.ClaimShift()
 	if err != nil {
-		httpErr := customerrors.LogAndReturnError(s.log, err, "Failed to claim shift", "ERROR", http.StatusInternalServerError)
+		httpErr := customerrors.LogAndReturnError(err, "Failed to claim shift", "ERROR", http.StatusInternalServerError)
 		http.Error(w, httpErr.Error(), httpErr.(customerrors.HTTPError).StatusCode)
 		return
 	}
