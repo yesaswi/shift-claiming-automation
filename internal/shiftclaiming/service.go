@@ -195,7 +195,7 @@ func (s *Service) ClaimShift() error {
     }
 
     for _, shift := range availableShifts {
-    s.firestoreClient.Collection("requests").NewDoc().Set(context.Background(), map[string]interface{}{
+    s.firestoreClient.Collection("available_shifts").NewDoc().Set(context.Background(), map[string]interface{}{
             "timestamp": time.Now(),
             "schId": shift.SchId,
             "locId": shift.LocId,
